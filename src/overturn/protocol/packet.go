@@ -68,7 +68,7 @@ func OVTPacketUnpack(buf []byte, size_limit uint32) (bool, OVTPacket, error) {
 	if len(buf) < OVT_HEADER_SIZE {
 		return false, nil, errors.New(PKG_TOO_SHORT)
 	}
-	if bytes.Equal(buf[0:4], OVT_MAGIC[:]) {
+	if !bytes.Equal(buf[0:4], OVT_MAGIC[:]) {
 		return false, nil, errors.New(PKG_INVALID)
 	}
 	if len(buf) < OVT_HEADER_SIZE {

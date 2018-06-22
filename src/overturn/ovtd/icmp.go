@@ -37,6 +37,14 @@ const (
 
 type ICMPTunnelPacket []byte
 
+//type NetTunnel interface {
+//    NewPacket(payload_size uint32) protocol.TunnelPacket
+//    Write(packet protocol.TunnelPacket) (int, error)
+//    Handler(handler func(packet protocol.TunnelPacket))
+//    Start() error
+//    Stop() error
+//}
+
 func (pkt ICMPTunnelPacket) PayloadRef() []byte {
 	return pkt[ICMP_HEADER_SIZE:]
 }
@@ -61,9 +69,9 @@ func (tun *ICMPTunnel) NewPacket(payload_size uint) protocol.TunnelPacket {
 	pack[1] = byte(0)                      // Code
 	pack[2] = byte(0)                      // Checksum
 	pack[3] = byte(0)
-	binary.BigEndian.PutUint32(pack[4:6], rand.Uint32())
-	binary.BigEndian.PutUint32(pack[6:8], rand.Uint32())
-	return pack
+	binary.BigEndian.PutUint16(pack[4:6], uint16(rand.Uint32()&0xFFFF))
+	binary.BigEndian.PutUint16(pack[6:8], uint16(rand.Uint32()&0xFFFF))
+	return &pack
 }
 
 func NewICMPTunnel(address string) (*ICMPTunnel, error) {
@@ -115,23 +123,7 @@ func (tun *ICMPTunnel) Handler(handler func(tun *ICMPTunnel, pkt protocol.Tunnel
 			}
 
 			atomic.AddUint64(&tun.RxStat, uint64(sz))
-			handler(tun, ICMPTunnelPacket(buf))
-
-			//is_encap, pkt, err = protocol.OVTPacketUnpack(buf[:sz], 65536)
-			//if is_encap {
-			//	if err != nil {
-			//		log.WithFields(log.Fields{
-			//			"module":     "ICMPTunnel",
-			//			"event":      "packet",
-			//			"err_detail": err.Error(),
-			//		}).Warningf("Invalid packet. Drop.")
-			//		continue
-			//	}
-			//	atomic.AddUint64(&tun.RxStat, uint64(len(*pkt))-protocol.OVT_HEADER_SIZE)
-
-			//	handler(tun, pkt)
-			//	//tun.DataOut <- pkt
-			//}
+			handler(tun, ICMPTunnelPacket(buf[:sz]))
 		}
 
 		last := atomic.AddUint32(&tun.worker_count, 0xFFFFFFFF) // -1
@@ -146,7 +138,7 @@ func (tun *ICMPTunnel) Handler(handler func(tun *ICMPTunnel, pkt protocol.Tunnel
 func (tun *ICMPTunnel) Write(packet protocol.TunnelPacket, address net.Addr) (int, error) {
 	pkt, ok := packet.(*ICMPTunnelPacket)
 	if !ok {
-		errors.New("Not a icmp tunnel packet")
+		return 0, errors.New("Not a icmp tunnel packet")
 	}
 
 	s := checksum((*pkt)[:])

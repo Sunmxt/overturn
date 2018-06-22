@@ -62,7 +62,7 @@ func ParseRPCNetPath(path string) (string, string, error) {
 	var err error
 	var domain, address string
 
-	parsed_path := strings.SplitN(":", "path", 2)
+	parsed_path := strings.SplitN(path, ":", 2)
 	switch len(parsed_path) {
 	case 1:
 		domain = "tcp"

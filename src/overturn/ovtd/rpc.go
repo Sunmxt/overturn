@@ -7,6 +7,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"net"
 	"net/rpc"
+	"os"
 	ctlrpc "overturn/ovtd/rpc"
 	"sync/atomic"
 )
@@ -35,6 +36,12 @@ func NewUserRPCServer(path string) (*UserRPCServer, error) {
 		return fallback(err)
 	}
 
+	if domain == "unix" {
+		_, err = os.Stat(address)
+		if err == nil {
+			os.Remove(address)
+		}
+	}
 	if listener, err = net.Listen(domain, address); err != nil {
 		return fallback(err)
 	}

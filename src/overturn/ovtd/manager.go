@@ -23,6 +23,7 @@ const (
 
 var (
 	OUTPUT_RULE        []string = []string{"-m", "comment", "--comment", "Overturn mark traffics", "-j", CAPTURE_MARK_CHAIN}
+	ICMP_IGNORE_RULE   []string = []string{"-p", "icmp", "-j", "RETURN"}
 	RULE_NOT_MATCH_RET []string = []string{"-m", "set", "!", "--match-set", CAPTURE_IPSET, "dst", "-j", "RETURN"}
 )
 
@@ -30,9 +31,6 @@ type NetworkNode struct {
 	Active bool
 	Name   string
 	ID     uuid.UUID
-}
-
-type ConfigOperation struct {
 }
 
 type NetworkCluster struct {
@@ -74,6 +72,7 @@ func NewClusterManager(ctl *Controller, config *NetworkClusterYAML) (*ClusterMan
 	var err error = nil
 
 	nm := new(ClusterManager)
+	nm.IptMark = 0x66
 	fallback := func(err error, desp string) (*ClusterManager, error) {
 		var detail string
 		if err != nil {
@@ -201,11 +200,17 @@ func (nm *ClusterManager) PacketRoute(buf []byte) {
 		return
 	}
 
-	node, ok := nm.Info.ByIP[ToIPv4Key(header.Dst)]
+	// ignore all non-ipv4 packet
+	if header.Version != 4 {
+		return
+	}
+
+	node, ok := nm.Info.ByIP[ToIPv4Key(header.Dst.To4())]
 	if ok && node != nil {
 		tun_pkt := nm.NetTun.NewPacket(uint(len(buf)) + protocol.OVT_HEADER_SIZE)
 		ovt_pkt := protocol.PlaceNewOVTPacket(tun_pkt.PayloadRef(), uint(len(buf)), protocol.RAW_PAYLOAD)
 		copy(ovt_pkt.PayloadRef(), buf)
+		ovt_pkt.Pack()
 		nm.NetTun.Write(tun_pkt, &net.IPAddr{header.Dst, ""})
 	}
 }
@@ -263,8 +268,43 @@ func (nm *ClusterManager) ClearIptablesRules() {
 	nm.Ipt.DeleteChain("mangle", CAPTURE_MARK_CHAIN)
 }
 
-func (nm *ClusterManager) Stop() {
+//func (nm *ClusterManager) ClearKernelRoute() {
+//    rule := netlink.NewRule()
+//    rule.Table = 94
+//    rule.Mark = nm.IptMark
+//
+//    netlink.RuleDel(&rule)
+//
+//    route := netlink.
+//}
+//
+//func (nm *ClusterManager) RefreshKernelRoute() {
+//
+//}
 
+func (nm *ClusterManager) Stop() error {
+	var err error
+
+	nm.ClearIPSetRules()
+	nm.ClearIptablesRules()
+
+	defer func() {
+		if err != nil {
+			log.WithFields(log.Fields{
+				"module": "ClusterManager",
+				"event":  "stop",
+			}).Error(err.Error())
+		}
+	}()
+
+	if err = nm.LinkTun.Stop(); err != nil {
+		return err
+	}
+	if err = nm.NetTun.Stop(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (nm *ClusterManager) RefreshRules() error {
@@ -351,7 +391,7 @@ func (nm *ClusterManager) prepare() error {
 				continue
 			}
 
-			if test_node, _ := nm.Info.ByIP[ToIPv4Key(ip)]; test_node != nil {
+			if test_node, _ := nm.Info.ByIP[ToIPv4Key(ip.To4())]; test_node != nil {
 				log.WithFields(log.Fields{
 					"module":     "ClusterManager",
 					"event":      "initialize",
@@ -472,6 +512,10 @@ func (nm *ClusterManager) RefreshIptablesRules() error {
 			nm.Ipt.ClearChain("mangle", CAPTURE_MARK_CHAIN)
 		}
 	}()
+
+	if err = nm.Ipt.Append("mangle", CAPTURE_MARK_CHAIN, ICMP_IGNORE_RULE...); err != nil {
+		return err
+	}
 
 	mark := fmt.Sprintf("0x%x", nm.IptMark)
 	if err = nm.Ipt.Append("mangle", CAPTURE_MARK_CHAIN, "-j", "MARK", "--set-mark", mark); err != nil {

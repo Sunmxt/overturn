@@ -29,24 +29,52 @@ func NewLinkTunnel(name string, queues int) (*LinkTunnel, error) {
 		Mode:       netlink.TUNTAP_MODE_TUN,
 		Flags:      0,
 		NonPersist: true,
-		Queues:     queues,
+		Queues:     1,
 		Fds:        nil,
 	},
 		RxStat:       0,
 		WxStat:       0,
 		worker_count: 0,
 		reader_index: 0,
-		running:      1,
+		running:      0,
 		stopSig:      make(chan int),
 	}
 
 	tun.Link.LinkAttrs.Name = name
-	err = netlink.LinkAdd(&tun.Link)
-	if err != nil {
+	if err = netlink.LinkAdd(&tun.Link); err != nil {
 		return nil, err
 	}
 
+	if err = tun.SetMTU(1472); err != nil {
+		return nil, err
+	}
+
+	//disable ipv6
+	var file *os.File
+	if file, err = os.OpenFile("/proc/sys/net/ipv6/conf/"+name+"/disable_ipv6", os.O_RDWR, 0); err != nil {
+		return nil, err
+	}
+	file.Write([]byte{'1'})
+	file.Close()
+
+	//if err = tun.update_attrs(); err != nil {
+	//	return nil, err
+	//}
+
 	return tun, nil
+}
+
+func (tun *LinkTunnel) update_attrs() error {
+	var link netlink.Link
+	var err error
+
+	// Update attrs
+	if link, err = netlink.LinkByName(tun.Link.Name); err != nil {
+		return err
+	}
+	tun.Link.LinkAttrs = *link.Attrs()
+
+	return nil
 }
 
 func (tun *LinkTunnel) Handler(handler func(tun *LinkTunnel, data []byte)) error {
@@ -111,7 +139,11 @@ func (tun *LinkTunnel) Close(buf []byte) error {
 }
 
 func (tun *LinkTunnel) SetMTU(mtu int) error {
-	return netlink.LinkSetMTU(&tun.Link, mtu)
+	err := netlink.LinkSetMTU(&tun.Link, mtu)
+	if err != nil {
+		return err
+	}
+	return tun.update_attrs()
 }
 
 func (tun *LinkTunnel) Up() error {

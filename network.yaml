@@ -1,0 +1,12 @@
+active_network: star_cluster
+control: "/var/run/overturn/ovtd.sock"
+pid: "/var/run/overturn/ovtd.pid"
+
+network:
+    star_cluster:
+        token: 3f9e36a676b24cf98d777b0550d8734f
+        endpoints:
+            - "222.197.176.144"
+            
+            
+        

@@ -7,17 +7,26 @@ import (
     "os"
 )
 
+type NodeConfig struct {
+    ID          string      `yaml:"id"`
+    Publish     string      `yaml:"publish"`
+    Active      bool        `yaml:"active"`
+}
 
-type Network struct {
-    Token       string     `yaml:"token"`
-    EndPoints   []string   `yaml:"endpoints"`
+type NetworkCluster struct {
+    Token               string                      `yaml:"token"`
+    TokenExpireBefore   uint64                      `yaml:"token_expire_before"`
+    TokenExpireAfter    uint64                      `yaml:"token_expire_after"`
+    Term                uint64                      `yaml:"term"`
+    HeartbeatPeriod     uint32                      `yaml:"heartbeat_period"`
+    HeartbeatTimeout    uint32                      `yaml:"heartbeat_timeout"`
+    Index               uint64                      `yaml:"index"`
+    Nodes               map[string]*NodeConfig      `yaml:"nodes"`
 }
 
 type DymanicConfigStruct struct {
-    Term        uint64              `yaml:"term"`
-    Index       uint64              `yaml:"index"`
-    Active      string              `yaml:"active"`
-    Network     map[string]*Network `yaml:"network,omitempty"`
+    Active      string                          `yaml:"active"`
+    Network     map[string]*NetworkCluster      `yaml:"network,omitempty"`
 }
 
 type DynamicConfig struct {
@@ -25,11 +34,12 @@ type DynamicConfig struct {
     Config      DymanicConfigStruct
 }
 
-type StaticConfig struct {
-    MaxVoteTimeout      uint16      `yaml:"max_vote_timeout,omitempty"`
-    Conrtol             string      `yaml:"control,omitempty"`
-    PidFile             string      `yaml:"pid_file,omitempty"`
-    DynamicConfig       string      `yaml:"dynamic_config,omitempty"`
+type Options struct {
+    ClusterConfig       string
+    PIDFile             string
+    Control             string
+    HeartbeatTimeout    uint
+    HeartbeatPeriod     uint
 }
 
 
@@ -50,10 +60,6 @@ func OpenDynamicConfig(path string) *DynamicConfig, error {
 
     // init
     if creating {
-        cfg.Config.Term = 0
-        cfg.Config.Index = 0
-        cfg.Config.Active = ""
-
         if err = cfg.Save(); err != nil {
             return nil, err
         }
@@ -111,23 +117,40 @@ func (cfg *DynamicConfig) GetPart(begin uint64, end uint64) {
 
 
 func parse_args() *Options {
-    
-    cfg := flag.String(
-            "config"
-            , "/etc/overturn.yaml"
-            , "Static configure."
+    dyn_cfg := flag.String(
+            "cluster-config"
+            , "/etc/ovt_net.yaml"
+            , "Dynamic configure maintained by overturn daemon."
         )
 
-    dyn_cfg := flag.String(
-            "dynamic_config"
-                , "/etc/ovr_net.yaml"
-            , "Dynamic configure which is maintained by overturn daemon."
+    pid := flags.String(
+            "pidfile"
+            , "/var/run/ovtd.pid"
+            , "PID file of daemon process."
+        )
+
+    ctl := flags.String(
+            "control"
+            , "unix:/var/run/ovtd.sock"
+            , "Control socket."
+        )
+
+    hb_timeout := flags.Uint(
+            "default-heartbeat-timeout"
+            , 1000
+            , "Default heartbeat timeout in network cluster."
+        )
+
+    hb_period := flags.Uint(
+            "default-heartbeat-period"
+            , 200
+            , "Default heartbeat period in network cluster."
         )
 
     help := flag.Bool(
             "help"
             , false
-            , "Print the usage"
+            , "Print the usage."
         )
 
     flag.Parse()
@@ -138,8 +161,11 @@ func parse_args() *Options {
     }
 
     return &Options{
-        Config:         *cfg
-        DynamicConfig:  *dyn_cfg
+        ClusterConfig:      *dyn_cfg,
+        PIDFile:            *pid,
+        Control:            *ctl,
+        HeartbeatTimeout:   *hb_timeout,
+        HeartbeatPeriod:    *hb_period,
     }
 }
 

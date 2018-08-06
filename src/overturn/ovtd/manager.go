@@ -4,6 +4,7 @@ import (
     "golang.org/x/net/icmp"
 
     "fmt"
+    "strconv"
     "github.com/coreos/go-iptables/iptables"
     "github.com/janeczku/go-ipset/ipset"
     log "github.com/sirupsen/logrus"
@@ -25,10 +26,13 @@ type NetNode struct {
 }
 
 type NetManager struct {
+    Config          *NetworkCluster
+
     Ipt             *iptables.IPTables
     CapIPs          *ipset.IPSet
 
     ICMPConn        *icmp.PacketConn
+    Tun             *netlink.Tuntap
 
     TunName         string
     Node            []*NetNode
@@ -37,19 +41,31 @@ type NetManager struct {
 }
 
 
-func NewNetManager(opts *Options) *NetManager, error {
+func NewNetManager(config *NetworkCluster) *NetManager, error {
     var err error = nil
 
     nm := new(NetManager)
+    fallback := func(err error, desp string) {
+        var detail string
+        if err != nil {
+            detail = err.Error()
+        } else {
+            detail = ""
+        }
 
-    nm.ICMPConn, err = ListenPacket("ip4:icmp", "0.0.0.0")
-    if err != nil {
         log.WithFields(log.Fields{
                 "module" : "NetManager",
                 "event" : "initialize"
-                "err_detail" : err.Error()
-            }).Error("Cannot listen icmp.")
+                "err_detail" : detail
+            }).Error(desp)
         return nil, err
+    }
+
+    nm.LoadDynamicConfigure(opts.)
+
+    nm.ICMPConn, err = ListenPacket("ip4:icmp", "0.0.0.0")
+    if err != nil {
+        return fallback(err, "Cannot listen icmp")
     }
     defer func() {
         if err != nil {
@@ -57,31 +73,42 @@ func NewNetManager(opts *Options) *NetManager, error {
         }
     }
 
-    
     if nm.Ipt, err = iptables.New(); err != nil {
-        log.WithFields(log.Fields{
-                "module" : "NetManager",
-                "event" : "initialize"
-                "err_detail" : err.Error()
-            }).Error("Cannot create iptables controller instance.")
-        return nil, err
+        return fallback(err, "Cannot create iptables controller instance.")
     }
 
-    // create tunnel interface
-    var net_ns *netlink.Handle
+    // create p2p device
+    var net_ns *netlink.Handle, li []Link
     net_ns, err = netlink.NewHandle(netlink.FAMILY_V4)
     if err != nil {
-        log.WithFields(log.Fields{
-                "module" : "NetManager",
-                "event" : "initialize"
-                "err_detail" : err.Error()
-            }).Error("Cannot get control current network namespace.")
-        return nil, err
+        return fallback(err, "Cannot get control current network namespace.")
     }
     defer net_ns.Delete()
 
-    nm.TunName = "ovt"
+    li, err = net_ns.LinkList()
 
+    for tail_num := 0, found := true ; tail_num < 10 && found ; tail_num ++ {
+        nm.Tun.LinkAttrs.Name = IF_NAME_PREFIX + strconv.Itoa(tail_num)
+        found = false
+        for i, link := range li {
+            attr := link.Attrs()
+            if attr.Name == nm.Tun.LinkAttrs.Name {
+                found = true
+                break     
+            }
+        }
+    }
+    if tail_num >= 10 {
+        fallback(nil, "Too many links.")
+        return nil, err
+    }
+    nm.Tun = new(netlink.Tuntap)
+    nm.Tun.LinkAttrs = netlink.NewLinkAttrs()
+    if err = net_ns.LinkAdd(nm.Tun); err != nil {
+        return fallback(err, fmt.Sprintf("Cannot add link %v", nm.Tun.LinkAttrs.Name))
+    }
+    
+    
     // setup iptables rules
     if err = nm.RefreshRules(); err != nil {
         log.WithFields(log.Fields{
@@ -97,8 +124,11 @@ func NewNetManager(opts *Options) *NetManager, error {
 
 
 func (nm *NetManager) Run() {
+    
+}
 
-     
+
+func (nm *NetManager) Stop() {
 }
 
 func (nm *NetManager) RefrushRules error {
@@ -119,9 +149,9 @@ func (nm *NetManager) RefreshIPSetRules() error {
 
     fallback := func(err error, desp string) {
         log.WithFields(log.Fields{
-                "module" : "NetManager"
-                "event" : "ipset"
-                "err_detail" : "err"
+                "module" : "NetManager",
+                "event" : "ipset",
+                "err_detail" : err.Error(),
             }).Error(desp)
         return err
     }

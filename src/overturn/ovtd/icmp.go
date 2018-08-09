@@ -99,6 +99,7 @@ func NewICMPTunnel(address string) ICMPTunnel, error {
 }
 
 func (tun *ICMPTunnel) Destroy() error {
+    tun.Stop()
     return tun.conn.Close()
 }
 

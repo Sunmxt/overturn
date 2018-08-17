@@ -47,7 +47,7 @@ func OpenDynamicConfig(path string) (*DynamicConfig, error) {
 	creating := false
 	cfg := new(DynamicConfig)
 
-	info, err := os.Stat(path)
+	_, err = os.Stat(path)
 	if err != nil {
 		creating = true
 	}
@@ -93,15 +93,14 @@ func (cfg *DynamicConfig) Save() error {
 }
 
 func (cfg *DynamicConfig) Load() error {
-	var err error
 	var info os.FileInfo
 
-	info, err = cfg.file.Stat()
+	info, _ = cfg.file.Stat()
 
 	buf := make([]byte, info.Size(), info.Size())
 
 	cfg.file.Seek(0, os.SEEK_SET)
-	if size, err := cfg.file.Read(buf); err != nil {
+	if _, err := cfg.file.Read(buf); err != nil {
 		return nil
 	}
 

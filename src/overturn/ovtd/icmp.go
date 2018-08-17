@@ -62,7 +62,6 @@ func (tun *ICMPTunnel) addReader(handler Handler) error {
 
 	atomic.AddUint32(&tun.worker_count, 1)
 	go func() {
-		var err error
 		var pkt *protocol.OVTPacket
 		var is_encap bool
 
@@ -71,7 +70,7 @@ func (tun *ICMPTunnel) addReader(handler Handler) error {
 		for tun.running > 0 {
 			now := time.Now()
 			tun.conn.SetReadDeadline(now.Add(1000000000))
-			sz, from, err := tun.conn.ReadFrom(buf)
+			sz, _, err := tun.conn.ReadFrom(buf)
 			if err != nil {
 				var op_err *net.OpError
 				var is_err bool
@@ -82,7 +81,7 @@ func (tun *ICMPTunnel) addReader(handler Handler) error {
 				}
 			}
 
-			is_encap, pkt, err = protocol.OVTPacketUnpack(buf, 65536)
+			is_encap, pkt, err = protocol.OVTPacketUnpack(buf[:sz], 65536)
 			if is_encap {
 				if err != nil {
 					log.WithFields(log.Fields{
@@ -115,13 +114,13 @@ func (tun *ICMPTunnel) Write(packet protocol.OVTPacket, address net.Addr) (int, 
 }
 
 func (tun *ICMPTunnel) Start() error {
-	var worker_count int
+	//var worker_count int
 
-	if tun.MaxWorker < -1 {
-		worker_count = runtime.NumCPU()
-	} else {
-		worker_count = tun.MaxWorker
-	}
+	//if tun.MaxWorker < -1 {
+	//	worker_count = runtime.NumCPU()
+	//} else {
+	//	worker_count = tun.MaxWorker
+	//}
 
 	//tun.DataOut = make(chan []byte, tun.MaxWorker)
 

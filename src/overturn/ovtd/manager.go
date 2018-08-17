@@ -37,7 +37,7 @@ type NetworkCluster struct {
 	Index             uint64
 	HeartbeatPeriod   uint32
 	HeartbeatTimeout  uint32
-	ByIP              map[net.IP]*NetworkNode
+	ByIP              map[[4]byte]*NetworkNode
 	ByID              map[uuid.UUID]*NetworkNode
 
 	Master *NetworkNode
@@ -57,6 +57,10 @@ type ClusterManager struct {
 	LinkTun *LinkTunnel
 
 	ctl *Controller
+}
+
+func ToIPv4Key(ip net.IP) [4]byte {
+	return [4]byte{ip[0], ip[1], ip[2], ip[3]}
 }
 
 func NewClusterManager(ctl *Controller, config *NetworkClusterYAML) (*ClusterManager, error) {
@@ -111,7 +115,7 @@ func NewClusterManager(ctl *Controller, config *NetworkClusterYAML) (*ClusterMan
 	for ; tail_num < 10 && found; tail_num++ {
 		link_name = IF_NAME_PREFIX + strconv.Itoa(tail_num)
 		found = false
-		for i, link := range li {
+		for _, link := range li {
 			attr := link.Attrs()
 			if attr.Name == link_name {
 				found = true
@@ -189,7 +193,7 @@ func (nm *ClusterManager) prepare() error {
 	nm.Info.Term = nm.Config.Term
 	nm.Info.Index = nm.Config.Index
 
-	nm.Info.ByIP = make(map[net.IP]*NetworkNode)
+	nm.Info.ByIP = make(map[[4]byte]*NetworkNode)
 	nm.Info.ByID = make(map[uuid.UUID]*NetworkNode)
 
 	// load configure
@@ -213,7 +217,7 @@ func (nm *ClusterManager) prepare() error {
 		node_info.Name = cfg.Name
 
 		// Parse IP
-		for i, ip_raw := range cfg.Publish {
+		for _, ip_raw := range cfg.Publish {
 			ip := net.ParseIP(ip_raw)
 			if ip == nil {
 				log.WithFields(log.Fields{
@@ -221,12 +225,22 @@ func (nm *ClusterManager) prepare() error {
 					"event":      "initialize",
 					"err_detail": "",
 					"node_id":    ID,
-				}).Errorf("Invalid IP Address %v. Ignore.")
+				}).Errorf("Invalid IP Address %v. Ignore.", ip_raw)
+
+				continue
+			}
+			ip = ip.To4()
+			if ip == nil {
+				log.WithFields(log.Fields{
+					"module":  "ClusterManager",
+					"event":   "initialize",
+					"node_if": ID,
+				}).Errorf("Not a IPv4 Address: %v. Ignore.", ip_raw)
 
 				continue
 			}
 
-			if test_node, ok := nm.Info.ByIP[ip]; test_node != nil {
+			if test_node, _ := nm.Info.ByIP[ToIPv4Key(ip)]; test_node != nil {
 				log.WithFields(log.Fields{
 					"module":     "ClusterManager",
 					"event":      "initialize",
@@ -237,15 +251,15 @@ func (nm *ClusterManager) prepare() error {
 				conflict_ips = append(conflict_ips, ip)
 				continue
 			}
-			nm.Info.ByIP[ip] = node_info
+			nm.Info.ByIP[ToIPv4Key(ip)] = node_info
 		}
 
 		node_info = new(NetworkNode)
 	}
 
 	// remove conflict ip
-	for i, ip := range conflict_ips {
-		node_info, ok = nm.Info.ByIP[ip]
+	for _, ip := range conflict_ips {
+		node_info, ok = nm.Info.ByIP[ToIPv4Key(ip)]
 		if ok {
 			log.WithFields(log.Fields{
 				"module":     "ClusterManager",
@@ -253,7 +267,7 @@ func (nm *ClusterManager) prepare() error {
 				"err_detail": "",
 				"node_id":    node_info.ID.String(),
 			}).Warningf("IP %v removed from %v due to conflict.", ip.String(), node_info.Name)
-			delete(nm.Info.ByIP, ip)
+			delete(nm.Info.ByIP, ToIPv4Key(ip))
 		}
 	}
 
@@ -296,7 +310,8 @@ func (nm *ClusterManager) RefreshIPSetRules() error {
 		return fallback(err, "Cannot flush ipset.")
 	}
 
-	for ip, node := range nm.Info.ByIP {
+	for key_ip, _ := range nm.Info.ByIP {
+		ip := net.IP(key_ip[:])
 		if err = nm.CapIPs.Add(ip.String(), 0); err != nil {
 			return fallback(err, fmt.Sprintf("Error occur when add %v", ip.String()))
 		}
@@ -319,7 +334,7 @@ func (nm *ClusterManager) RefreshIptablesRules() error {
 			log.WithFields(log.Fields{
 				"module":     "ClusterManager",
 				"event":      "iptables",
-				"err_detail": err.Error(),
+				"err_detail": err.Error() + ":" + err_detail,
 			}).Error("Cannot apply rules.")
 		}
 	}()
@@ -368,9 +383,8 @@ func (nm *ClusterManager) RefreshIptablesRules() error {
 }
 
 func (nm *ClusterManager) ReceiveLowLevelMessage() *msg.Message {
-
+	return nil
 }
 
 func (nm *ClusterManager) SendLowLevelMessage(message *msg.Message) {
-
 }

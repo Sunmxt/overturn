@@ -2,7 +2,6 @@ package ovtd
 
 import (
 	"errors"
-	"fmt"
 	log "github.com/Sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"os"
@@ -22,8 +21,6 @@ type LinkTunnel struct {
 	stopSig      chan int
 }
 
-type Handler func(tun *LinkTunnel, data []byte)
-
 func NewLinkTunnel(name string, queues int) (*LinkTunnel, error) {
 	var err error
 
@@ -33,41 +30,42 @@ func NewLinkTunnel(name string, queues int) (*LinkTunnel, error) {
 		Flags:      0,
 		NonPersist: true,
 		Queues:     queues,
-		Fds:        make([]*os.File),
+		Fds:        nil,
 	},
 		RxStat:       0,
-		WXStat:       0,
+		WxStat:       0,
 		worker_count: 0,
 		reader_index: 0,
 		running:      1,
 		stopSig:      make(chan int),
 	}
 
-	tun.LinkAttrs.Name = name
-	err = netlink.LinkAdd(ifce.Link)
+	tun.Link.LinkAttrs.Name = name
+	err = netlink.LinkAdd(&tun.Link)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return tun
+	return tun, nil
 }
 
-func (tun *LinkTunnel) AddReader(handler Handler) error {
-	atomic.AddUint32(tun.worker_count, 1)
-	reader_idx := atomic.AddUint32(tun.reader_idx, 1) - 1
+func (tun *LinkTunnel) AddReader(handler func(tun *LinkTunnel, data []byte)) error {
+	atomic.AddUint32(&tun.worker_count, 1)
+	reader_idx := atomic.AddUint32(&tun.reader_index, 1) - 1
 
 	go func() {
 		last_mtu := tun.Link.Attrs().MTU
 
 		buf := make([]byte, last_mtu+4)
-		for tun.running {
-			fd := reader_idx % len(tun.Link.Fds)
+		for tun.running > 0 {
+			fd := tun.Link.Fds[reader_idx%uint32(len(tun.Link.Fds))]
 			now := time.Now()
 			fd.SetReadDeadline(now.Add(1000000000))
 			size, err := fd.Read(buf)
 
 			if err != nil {
-				if !err.Timeout() {
+				sys_err, ok := err.(*os.SyscallError)
+				if ok && sys_err.Timeout() {
 					log.WithFields(log.Fields{
 						"module":     "LinkTunnel",
 						"err_detail": err.Error(),
@@ -76,7 +74,7 @@ func (tun *LinkTunnel) AddReader(handler Handler) error {
 				continue
 			}
 
-			atomic.AddUint64(&tun.RxStat, size)
+			atomic.AddUint64(&tun.RxStat, uint64(size))
 			handler(tun, buf[:size])
 
 			// reallocate buffer if MTU is changed
@@ -87,7 +85,7 @@ func (tun *LinkTunnel) AddReader(handler Handler) error {
 			}
 		}
 
-		new_count := atomic.AddUint32(tun.worker_count, uint32(-1))
+		new_count := atomic.AddUint32(&tun.worker_count, 0xFFFFFFFF) // -1
 		if new_count == 0 {
 			tun.stopSig <- 0
 		}
@@ -104,24 +102,24 @@ func (tun *LinkTunnel) WxClear() uint64 {
 	return atomic.SwapUint64(&tun.WxStat, 0)
 }
 
-func (tun *LinkTunnel) RxClear() {
+func (tun *LinkTunnel) RxClear() uint64 {
 	return atomic.SwapUint64(&tun.RxStat, 0)
 }
 
 func (tun *LinkTunnel) Close(buf []byte) error {
-	return netlink.LinkDel(tun.Link)
+	return netlink.LinkDel(&tun.Link)
 }
 
 func (tun *LinkTunnel) SetMTU(mtu int) error {
-	return netlink.LinkSetMTU(tun.Link, mtu)
+	return netlink.LinkSetMTU(&tun.Link, mtu)
 }
 
 func (tun *LinkTunnel) Up() error {
-	return netlink.LinkSetUp(tun.Link)
+	return netlink.LinkSetUp(&tun.Link)
 }
 
 func (tun *LinkTunnel) Down() error {
-	return netlink.LinkSetDown(tun.Link)
+	return netlink.LinkSetDown(&tun.Link)
 }
 
 func (tun *LinkTunnel) Stop() error {
@@ -160,11 +158,11 @@ func (tun *LinkTunnel) Start() error {
 }
 
 func (tun *LinkTunnel) SetWriteDeadline(fd_index uint, t time.Time) error {
-	file := tun.Link.Fds[fd_index%len(tun.Link.Fds)]
+	file := tun.Link.Fds[fd_index%uint(len(tun.Link.Fds))]
 	return file.SetDeadline(t)
 }
 
 func (tun *LinkTunnel) Write(buf []byte, fd_index uint) (int, error) {
-	file := tun.Link.Fds[fd_index%len(tun.Link.Fds)]
+	file := tun.Link.Fds[fd_index%uint(len(tun.Link.Fds))]
 	return file.Write(buf)
 }

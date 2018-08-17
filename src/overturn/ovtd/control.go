@@ -105,7 +105,7 @@ func (ctl *Controller) Run() error {
 			"module":     "Controller",
 			"event":      "initialize",
 			"err_detail": err.Error(),
-		}).Errorf("Invalid machine ID: %v.", nm.Config.Machine)
+		}).Errorf("Invalid machine ID: %v.", cfg.Config.Machine)
 		return errors.New("Invalid machine ID.")
 	}
 

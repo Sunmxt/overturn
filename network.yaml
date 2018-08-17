@@ -5,8 +5,23 @@ pid: "/var/run/overturn/ovtd.pid"
 network:
     star_cluster:
         token: 3f9e36a676b24cf98d777b0550d8734f
-        endpoints:
-            - "222.197.176.144"
-            
-            
+        token_expire_before: 112937189
+        token_expire_after: 112947189
+        term: 10
+        index: 18
+        
+        nodes:
+            node1:
+                id: "<uuid>"
+                publish:
+                    "<IP1>"
+                    "<IP2>"
+                active: true
+            node2:
+                id: "<uuid>"
+                publish:
+                    "<IP1>"
+                    "<IP2>"
+                active: true
+                
         

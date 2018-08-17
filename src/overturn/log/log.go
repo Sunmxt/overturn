@@ -1,12 +1,11 @@
 package log
 
 import (
-    log "github.com/sirupsen/logrus"
+	log "github.com/Sirupsen/logrus"
 )
 
 var logger *log.Logger
 
 func init() {
-    logger = log.New()
+	logger = log.New()
 }
-

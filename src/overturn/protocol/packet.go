@@ -46,7 +46,7 @@ func checksum(b []byte) uint16 {
 	return ^uint16(s)
 }
 
-func NewOVTPacket(payload_size uint) *OVTPacket {
+func NewOVTPacket(payload_size uint) OVTPacket {
 	pack := make(OVTPacket, payload_size+OVT_HEADER_SIZE+ICMP_HEADER_SIZE)
 	pack[0] = byte(ipv4.ICMPTypeEchoReply) // Type
 	pack[1] = byte(0)                      // Code
@@ -58,7 +58,7 @@ func NewOVTPacket(payload_size uint) *OVTPacket {
 	return &pack
 }
 
-func OVTPacketUnpack(buf []byte, size_limit uint32) (bool, *OVTPacket, error) {
+func OVTPacketUnpack(buf []byte, size_limit uint32) (bool, OVTPacket, error) {
 
 	if len(buf) < OFFSET_OVT_HEADER+4 {
 		return false, nil, errors.New(PKG_TOO_SHORT)

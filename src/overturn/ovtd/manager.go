@@ -7,10 +7,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/janeczku/go-ipset/ipset"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/net/ipv4"
 	"net"
 	"overturn/protocol"
 	"runtime"
 	"strconv"
+	"sync/atomic"
 )
 
 const (
@@ -60,7 +62,8 @@ type ClusterManager struct {
 	NetTun  *ICMPTunnel
 	LinkTun *LinkTunnel
 
-	ctl *Controller
+	ctl      *Controller
+	fd_index uint32
 }
 
 func ToIPv4Key(ip net.IP) [4]byte {
@@ -181,9 +184,71 @@ func (nm *ClusterManager) Start() error {
 		}
 	}()
 
+	nm.start_handler()
+	// Forwarder
 	//go nm.cluster_bootstrap()
 	//go nm.log_stat()
 	return nil
+}
+
+func (nm *ClusterManager) PacketRoute(buf []byte) {
+	header, err := ipv4.ParseHeader(buf)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"module": "ClusterManager",
+			"event":  "packet",
+		}).Errorf("Not a valid IP Packet: "+err.Error()+"length: %v", len(buf))
+		return
+	}
+
+	node, ok := nm.Info.ByIP[ToIPv4Key(header.Dst)]
+	if ok && node != nil {
+		tun_pkt := nm.NetTun.NewPacket(uint(len(buf)) + protocol.OVT_HEADER_SIZE)
+		ovt_pkt := protocol.PlaceNewOVTPacket(tun_pkt.PayloadRef(), uint(len(buf)), protocol.RAW_PAYLOAD)
+		copy(ovt_pkt.PayloadRef(), buf)
+		nm.NetTun.Write(tun_pkt, &net.IPAddr{header.Dst, ""})
+	}
+}
+
+func (nm *ClusterManager) DispatchOVTPacket(pkt protocol.OVTPacket) {
+
+	switch pkt.PayloadType() {
+	case protocol.RAW_PAYLOAD:
+		nm.DeliverPayload(pkt.PayloadRef())
+	default:
+		break
+	}
+
+}
+
+func (nm *ClusterManager) DeliverPayload(payload []byte) {
+	fd_index := atomic.AddUint32(&nm.fd_index, 1)
+	nm.LinkTun.Write(payload, uint(fd_index))
+}
+
+func (nm *ClusterManager) start_handler() {
+
+	nm.NetTun.Handler(func(tun *ICMPTunnel, pkt protocol.TunnelPacket) {
+		payload := pkt.PayloadRef()
+		is_encap, packet, err := protocol.OVTPacketUnpack(payload, 65536)
+
+		if is_encap {
+			if packet == nil {
+				if err != nil {
+					log.WithFields(log.Fields{
+						"module": "ClusterManager",
+						"event":  "packet",
+					}).Error(err.Error())
+				}
+			} else {
+				nm.DispatchOVTPacket(packet)
+			}
+		}
+	})
+
+	nm.LinkTun.Handler(func(tun *LinkTunnel, data []byte) {
+		nm.PacketRoute(data)
+	})
 }
 
 func (nm *ClusterManager) ClearIPSetRules() {
@@ -419,11 +484,4 @@ func (nm *ClusterManager) RefreshIptablesRules() error {
 
 	fallback = false
 	return nil
-}
-
-func (nm *ClusterManager) ReceiveLowLevelMessage() *protocol.Message {
-	return nil
-}
-
-func (nm *ClusterManager) SendMessage(message *protocol.Message) {
 }

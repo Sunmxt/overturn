@@ -48,7 +48,7 @@ func (m *JoinRequest) Place(buf []byte) error {
 	}
 	copy(buf[0:16], m.Name[:])
 	copy(buf[16:32], m.Token[:])
-    return nil
+	return nil
 }
 
 func (m *JoinRequest) Unmarshal(buf []byte) error {

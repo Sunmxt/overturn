@@ -35,7 +35,7 @@ type TunnelPacket interface {
 var (
 	OVT_VERSION = 0xAA
 	OVT_MAGIC   = [4]byte{'O', 'V', 'T', 0xAA}
-	VERSION = [2]byte{1, 0}
+	VERSION     = [2]byte{1, 0}
 )
 
 const (

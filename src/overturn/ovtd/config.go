@@ -94,6 +94,7 @@ func (cfg *DynamicConfig) Save() error {
 
 func (cfg *DynamicConfig) Load() error {
 	var info os.FileInfo
+	var err error
 
 	info, _ = cfg.file.Stat()
 
@@ -104,7 +105,15 @@ func (cfg *DynamicConfig) Load() error {
 		return nil
 	}
 
-	return yaml.Unmarshal(buf, cfg.Config)
+	err = yaml.Unmarshal(buf, &cfg.Config)
+	if err != nil {
+		return err
+	}
+
+	if cfg.Config.Network == nil {
+		cfg.Config.Network = make(map[string]*NetworkClusterYAML)
+	}
+	return nil
 }
 
 func (cfg *DynamicConfig) GetPart(begin uint64, end uint64) {

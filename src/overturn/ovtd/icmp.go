@@ -3,10 +3,14 @@ package ovtd
 import (
 	"overturn/protocol"
 
+	"encoding/binary"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
+	//log "github.com/Sirupsen/logrus"
 	"net"
-	"runtime"
+	//"runtime"
+	"errors"
+	"golang.org/x/net/ipv4"
+	"math/rand"
 	"sync/atomic"
 	"time"
 )
@@ -17,10 +21,9 @@ type ICMPTunnel struct {
 	//DataIn          chan []*protocol.OVTPacket
 	//DataOut         chan []*protocol.OVTPacket
 
-	MaxWorker int
-	RxStat    uint64
-	WxStat    uint64
-	MTU       uint32
+	RxStat uint64
+	WxStat uint64
+	MTU    uint32
 
 	worker_count uint32
 	running      uint32
@@ -28,13 +31,45 @@ type ICMPTunnel struct {
 	sigStop      chan int
 }
 
-type Handler func(tun *ICMPTunnel, pkt *protocol.OVTPacket)
+const (
+	ICMP_HEADER_SIZE = 8
+)
+
+type ICMPTunnelPacket []byte
+
+func (pkt ICMPTunnelPacket) PayloadRef() []byte {
+	return pkt[ICMP_HEADER_SIZE:]
+}
+
+func checksum(b []byte) uint16 {
+	csumcv := len(b) - 1 // checksum coverage
+	s := uint32(0)
+	for i := 0; i < csumcv; i += 2 {
+		s += uint32(b[i+1])<<8 | uint32(b[i])
+	}
+	if csumcv&1 == 0 {
+		s += uint32(b[csumcv])
+	}
+	s = s>>16 + s&0xffff
+	s = s + s>>16
+	return ^uint16(s)
+}
+
+func (tun *ICMPTunnel) NewPacket(payload_size uint) protocol.TunnelPacket {
+	pack := make(ICMPTunnelPacket, payload_size+ICMP_HEADER_SIZE)
+	pack[0] = byte(ipv4.ICMPTypeEchoReply) // Type
+	pack[1] = byte(0)                      // Code
+	pack[2] = byte(0)                      // Checksum
+	pack[3] = byte(0)
+	binary.BigEndian.PutUint32(pack[4:6], rand.Uint32())
+	binary.BigEndian.PutUint32(pack[6:8], rand.Uint32())
+	return pack
+}
 
 func NewICMPTunnel(address string) (*ICMPTunnel, error) {
 	var err error
 	tun := new(ICMPTunnel)
 
-	tun.MaxWorker = runtime.NumCPU()
 	tun.worker_count = 0
 	tun.RxStat = 0
 	tun.WxStat = 0
@@ -55,17 +90,11 @@ func (tun *ICMPTunnel) Destroy() error {
 	return tun.conn.Close()
 }
 
-func (tun *ICMPTunnel) addReader(handler Handler) error {
-	if tun.MaxWorker > 0 && tun.worker_count >= uint32(tun.MaxWorker) {
-		return fmt.Errorf("Maximum number of worker reached.")
-	}
+func (tun *ICMPTunnel) Handler(handler func(tun *ICMPTunnel, pkt protocol.TunnelPacket)) error {
 
 	atomic.AddUint32(&tun.worker_count, 1)
 	go func() {
-		var pkt *protocol.OVTPacket
-		var is_encap bool
-
-		buf := make([]byte, tun.MTU+28+protocol.OVT_HEADER_SIZE)
+		buf := make([]byte, tun.MTU-20)
 
 		for tun.running > 0 {
 			now := time.Now()
@@ -81,21 +110,28 @@ func (tun *ICMPTunnel) addReader(handler Handler) error {
 				}
 			}
 
-			is_encap, pkt, err = protocol.OVTPacketUnpack(buf[:sz], 65536)
-			if is_encap {
-				if err != nil {
-					log.WithFields(log.Fields{
-						"module":     "ICMPTunnel",
-						"event":      "packet",
-						"err_detail": err.Error(),
-					}).Warningf("Invalid packet. Drop.")
-					continue
-				}
-				atomic.AddUint64(&tun.RxStat, uint64(len(*pkt))-protocol.OVT_HEADER_SIZE)
-
-				handler(tun, pkt)
-				//tun.DataOut <- pkt
+			if ipv4.ICMPType(buf[0]) != ipv4.ICMPTypeEchoReply && ipv4.ICMPType(buf[0]) != ipv4.ICMPTypeEcho {
+				continue
 			}
+
+			atomic.AddUint64(&tun.RxStat, uint64(sz))
+			handler(tun, ICMPTunnelPacket(buf))
+
+			//is_encap, pkt, err = protocol.OVTPacketUnpack(buf[:sz], 65536)
+			//if is_encap {
+			//	if err != nil {
+			//		log.WithFields(log.Fields{
+			//			"module":     "ICMPTunnel",
+			//			"event":      "packet",
+			//			"err_detail": err.Error(),
+			//		}).Warningf("Invalid packet. Drop.")
+			//		continue
+			//	}
+			//	atomic.AddUint64(&tun.RxStat, uint64(len(*pkt))-protocol.OVT_HEADER_SIZE)
+
+			//	handler(tun, pkt)
+			//	//tun.DataOut <- pkt
+			//}
 		}
 
 		last := atomic.AddUint32(&tun.worker_count, 0xFFFFFFFF) // -1
@@ -107,8 +143,17 @@ func (tun *ICMPTunnel) addReader(handler Handler) error {
 	return nil
 }
 
-func (tun *ICMPTunnel) Write(packet protocol.OVTPacket, address net.Addr) (int, error) {
-	wx, err := tun.conn.WriteTo(packet, address)
+func (tun *ICMPTunnel) Write(packet protocol.TunnelPacket, address net.Addr) (int, error) {
+	pkt, ok := packet.(*ICMPTunnelPacket)
+	if !ok {
+		errors.New("Not a icmp tunnel packet")
+	}
+
+	s := checksum((*pkt)[:])
+	(*pkt)[2] ^= byte(s)
+	(*pkt)[3] ^= byte(s >> 8)
+
+	wx, err := tun.conn.WriteTo((*pkt)[:], address)
 	atomic.AddUint64(&tun.WxStat, uint64(wx))
 	return wx, err
 }
@@ -132,6 +177,15 @@ func (tun *ICMPTunnel) Start() error {
 	//}
 
 	// Stat logger here
+	for {
+		running := tun.running
+		if running > 0 {
+			return nil
+		}
+		if atomic.CompareAndSwapUint32(&tun.running, 0, 1) {
+			break
+		}
+	}
 
 	return nil
 }

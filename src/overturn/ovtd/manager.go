@@ -8,16 +8,20 @@ import (
 	"github.com/janeczku/go-ipset/ipset"
 	"github.com/vishvananda/netlink"
 	"net"
-	"overturn/msg"
+	"overturn/protocol"
 	"runtime"
 	"strconv"
-	"strings"
 )
 
 const (
 	CAPTURE_MARK_CHAIN = "OVERTURN_CAPTURE"
 	CAPTURE_IPSET      = "overturned"
 	IF_NAME_PREFIX     = "ovt"
+)
+
+var (
+	OUTPUT_RULE        []string = []string{"-m", "comment", "--comment", "Overturn mark traffics", "-j", CAPTURE_MARK_CHAIN}
+	RULE_NOT_MATCH_RET []string = []string{"-m", "set", "!", "--match-set", CAPTURE_IPSET, "dst", "-j", "RETURN"}
 )
 
 type NetworkNode struct {
@@ -149,11 +153,53 @@ func NewClusterManager(ctl *Controller, config *NetworkClusterYAML) (*ClusterMan
 	return nm, nil
 }
 
-func (nm *ClusterManager) Start() {
+func (nm *ClusterManager) Start() error {
+	var err error = nil
 
+	defer func() {
+		if err != nil {
+			nm.ClearIPSetRules()
+			nm.ClearIptablesRules()
+		}
+	}()
+
+	if err = nm.LinkTun.Start(); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			nm.LinkTun.Stop()
+		}
+	}()
+
+	if err = nm.NetTun.Start(); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			nm.LinkTun.Stop()
+		}
+	}()
+
+	//go nm.cluster_bootstrap()
+	//go nm.log_stat()
+	return nil
+}
+
+func (nm *ClusterManager) ClearIPSetRules() {
+	nm.CapIPs.Flush()
+	nm.CapIPs.Destroy()
+	nm.CapIPs = nil
+}
+
+func (nm *ClusterManager) ClearIptablesRules() {
+	nm.Ipt.ClearChain("mangle", CAPTURE_MARK_CHAIN)
+	nm.Ipt.Delete("mangle", "OUTPUT", OUTPUT_RULE...)
+	nm.Ipt.DeleteChain("mangle", CAPTURE_MARK_CHAIN)
 }
 
 func (nm *ClusterManager) Stop() {
+
 }
 
 func (nm *ClusterManager) RefreshRules() error {
@@ -322,31 +368,28 @@ func (nm *ClusterManager) RefreshIPSetRules() error {
 
 func (nm *ClusterManager) RefreshIptablesRules() error {
 	var err error = nil
-	var err_detail string
 	var ok bool
 	fallback := true
 
+	nm.ClearIptablesRules()
 	nm.Ipt.NewChain("mangle", CAPTURE_MARK_CHAIN)
-	nm.Ipt.ClearChain("mangle", CAPTURE_MARK_CHAIN)
 	defer func() {
 		if fallback {
 			nm.Ipt.DeleteChain("mangle", CAPTURE_MARK_CHAIN)
 			log.WithFields(log.Fields{
 				"module":     "ClusterManager",
 				"event":      "iptables",
-				"err_detail": err.Error() + ":" + err_detail,
+				"err_detail": err.Error(),
 			}).Error("Cannot apply rules.")
 		}
 	}()
 
-	OUTPUT_RULE := []string{"m", "comment", "--comment", "Overturn mark traffics", "-j", CAPTURE_MARK_CHAIN}
 	ok, err = nm.Ipt.Exists("mangle", "OUTPUT", OUTPUT_RULE...)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		if err = nm.Ipt.Insert("mangle", "OUTPUT", 1, OUTPUT_RULE...); err != nil {
-			err_detail = "-t mangle -A OUTPUT " + strings.Join(OUTPUT_RULE, " ")
 			return err
 		}
 	}
@@ -356,9 +399,7 @@ func (nm *ClusterManager) RefreshIptablesRules() error {
 		}
 	}()
 
-	RULE_NOT_MATCH_RET := []string{"!", "-m", "set", "--match-set", CAPTURE_IPSET, "dst", "-j", "RETURN"}
 	if err = nm.Ipt.Append("mangle", CAPTURE_MARK_CHAIN, RULE_NOT_MATCH_RET...); err != nil {
-		err_detail = "-t mangle -A " + CAPTURE_MARK_CHAIN + strings.Join(RULE_NOT_MATCH_RET, " ")
 		return err
 	}
 	defer func() {
@@ -369,12 +410,10 @@ func (nm *ClusterManager) RefreshIptablesRules() error {
 
 	mark := fmt.Sprintf("0x%x", nm.IptMark)
 	if err = nm.Ipt.Append("mangle", CAPTURE_MARK_CHAIN, "-j", "MARK", "--set-mark", mark); err != nil {
-		err_detail = "-t mangle -A " + CAPTURE_MARK_CHAIN + "-j MARK --set-mark " + mark
 		return err
 	}
 
 	if err = nm.Ipt.Append("mangle", CAPTURE_MARK_CHAIN, "-j", "RETURN"); err != nil {
-		err_detail = "-t mangle -A " + CAPTURE_MARK_CHAIN + "-j RETURN"
 		return err
 	}
 
@@ -382,9 +421,9 @@ func (nm *ClusterManager) RefreshIptablesRules() error {
 	return nil
 }
 
-func (nm *ClusterManager) ReceiveLowLevelMessage() *msg.Message {
+func (nm *ClusterManager) ReceiveLowLevelMessage() *protocol.Message {
 	return nil
 }
 
-func (nm *ClusterManager) SendLowLevelMessage(message *msg.Message) {
+func (nm *ClusterManager) SendMessage(message *protocol.Message) {
 }

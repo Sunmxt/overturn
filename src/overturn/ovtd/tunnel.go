@@ -49,7 +49,7 @@ func NewLinkTunnel(name string, queues int) (*LinkTunnel, error) {
 	return tun, nil
 }
 
-func (tun *LinkTunnel) AddReader(handler func(tun *LinkTunnel, data []byte)) error {
+func (tun *LinkTunnel) Handler(handler func(tun *LinkTunnel, data []byte)) error {
 	atomic.AddUint32(&tun.worker_count, 1)
 	reader_idx := atomic.AddUint32(&tun.reader_index, 1) - 1
 

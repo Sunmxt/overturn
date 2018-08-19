@@ -1,4 +1,4 @@
-package msg
+package protocol
 
 import (
 	"encoding/binary"
@@ -24,13 +24,14 @@ func (m *MessageHeader) Unmarshal(buf []byte) error {
 	m.Major = buf[0]
 	m.Minor = buf[1]
 	m.Type = buf[2]
+	return nil
 }
 
 const (
 	NODE_ACTIVATE = iota
 	HEARTBEAT_MASTER
 	HEARTBEAT_NODE
-    JOIN_REQUEST
+	JOIN_REQUEST
 )
 
 const (
@@ -48,53 +49,53 @@ type Message interface {
 
 // Join : Join a network
 type JoinRequest struct {
-    Header MessageHeader
-    Name   [16]byte
-    Token  uuid.UUID
+	Header MessageHeader
+	Name   [16]byte
+	Token  uuid.UUID
 }
 
 func NewJoinRequest(network_name string, token uuid.UUID) *JoinRequest {
-    m := new(JoinRequest)
-    m.Header.Major = VERSION_MAJOR
-    m.Header.Major = VERSION_MINOR
-    m.Header.Type = JOIN_REQUEST
-    copy(m.Name[:], network_name)
-    m.Token = token
-    return m
+	m := new(JoinRequest)
+	m.Header.Major = VERSION_MAJOR
+	m.Header.Major = VERSION_MINOR
+	m.Header.Type = JOIN_REQUEST
+	copy(m.Name[:], network_name)
+	m.Token = token
+	return m
 }
 
 func (m *JoinRequest) GetVersion() (uint8, uint8) {
-    return m.Header.Major, m.Header.Minor
+	return m.Header.Major, m.Header.Minor
 }
 
 func (m *JoinRequest) Type() uint8 {
-    return m.Header.Type
+	return m.Header.Type
 }
 
 func (m *JoinRequest) Marshal() []byte {
-    buf := make([]byte, len(*m))
-    m.Header.Marshal(buf[0:3])
-    copy(buf[3:19], m.Name)
-    copy(buf[19:35], m.Token)
-    return buf
+	buf := make([]byte, 3+16+16)
+	m.Header.Marshal(buf[0:3])
+	copy(buf[3:19], m.Name[:])
+	copy(buf[19:35], m.Token[:])
+	return buf
 }
 
 func (m *JoinRequest) Unmarshal(buf []byte) error {
-    var err error
-    if len(buf) != len(*m) {
-        return fmt.Errorf("Not a valid JoinRequest message.")
-    }
-    err = m.Header.Unmarshal(buf[0:3])
-    if err != nil {
-        return err
-    }
-    copy(m.Name, buf[3:19])
-    copy(m.Token, buf[19:35])
-    return nil
+	var err error
+	if uint(len(buf)) != m.Size() {
+		return fmt.Errorf("Not a valid JoinRequest message.")
+	}
+	err = m.Header.Unmarshal(buf[0:3])
+	if err != nil {
+		return err
+	}
+	copy(m.Name[:], buf[3:19])
+	copy(m.Token[:], buf[19:35])
+	return nil
 }
 
 func (m *JoinRequest) Size() uint {
-    return uint(len(*m))
+	return uint(3 + 16 + 16)
 }
 
 // NodeActivate : An existing node is up.
@@ -150,7 +151,7 @@ func (m *NodeActivate) Unmarshal(buf []byte) error {
 type Heartbeat struct {
 	Header  MessageHeader
 	NetName [16]byte
-    Master  uuid.UUID
+	Master  uuid.UUID
 	Term    uint64
 	Index   uint64
 }
@@ -164,11 +165,11 @@ func NewMasterHeartbeat() *Heartbeat {
 }
 
 func NewNodeHeartbeat() *Heartbeat {
-    m := new(Heartbeat)
-    m.Header.Major = VERSION_MAJOR
-    m.Header.Minor = VERSION_MINOR
-    m.Header.Type = HEARTBEAT_NODE
-    return m
+	m := new(Heartbeat)
+	m.Header.Major = VERSION_MAJOR
+	m.Header.Minor = VERSION_MINOR
+	m.Header.Type = HEARTBEAT_NODE
+	return m
 }
 
 func (m *Heartbeat) GetVersion() (uint8, uint8) {
@@ -183,7 +184,7 @@ func (m *Heartbeat) Marshal() []byte {
 	buf := make([]byte, m.Size(), m.Size())
 	m.Header.Marshal(buf[0:3])
 	copy(buf[3:19], m.NetName[:])
-    copy(buf[19:35], m.Master[:]])
+	copy(buf[19:35], m.Master[:])
 	binary.BigEndian.PutUint64(buf[35:43], m.Term)
 	binary.BigEndian.PutUint64(buf[43:51], m.Index)
 	return buf
@@ -195,7 +196,7 @@ func (m *Heartbeat) Unmarshal(buf []byte) error {
 	}
 	m.Header.Unmarshal(buf[0:3])
 	copy(m.NetName[:], buf[3:19])
-    copy(m.Master[:], buf[19:35])
+	copy(m.Master[:], buf[19:35])
 	m.Term = binary.BigEndian.Uint64(buf[35:43])
 	m.Index = binary.BigEndian.Uint64(buf[43:51])
 	return nil

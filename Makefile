@@ -14,13 +14,13 @@ format:
 	go fmt overturn/...
 
 ovtd-deps:
-	go get $(OVTD_MAIN_PATH)
+	go get -v $(OVTD_MAIN_PATH)
 
 ovtd-debug: format ovtd-deps
-	go install -gcflags='all=-N -l' $(OVTD_MAIN_PATH)
+	go install -v -gcflags='all=-N -l' $(OVTD_MAIN_PATH)
 
 ovtd-release: format ovtd-deps
-	go install -ldflags='-s' $(OVTD_MAIN_PATH)
+	go install -v -ldflags='-s' $(OVTD_MAIN_PATH)
 
 ovtd-clean:
 	go clean -i $(OVTD_MAIN_PATH)

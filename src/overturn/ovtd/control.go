@@ -15,7 +15,8 @@ const (
 type Controller struct {
 	*Options
 	*DynamicConfig
-	Machine uuid.UUID
+	Machine   uuid.UUID
+	RPCServer *UserRPCServer
 }
 
 func NewController(opts *Options) *Controller {
@@ -141,11 +142,15 @@ func (ctl *Controller) Run() error {
 		}
 	}
 
+	if ctl.RPCServer, err = NewUserRPCServer(ctl.Options.Control); err != nil {
+		return err
+	}
+
 	var cluster_manager *ClusterManager
 	cluster_manager, err = NewClusterManager(ctl, active_config)
 	cluster_manager.Start()
 
 	// RPC here
+	return ctl.RPCServer.Serve()
 
-	return nil
 }
